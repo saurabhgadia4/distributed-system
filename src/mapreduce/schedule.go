@@ -16,23 +16,28 @@ import (
 //
 func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, registerChan chan string) {
 	var ntasks int
-	var wg sync.WaitGroup
-	var n_other int // number of inputs (for reduce) or outputs (for map)
+	var nother int // number of inputs (for reduce) or outputs (for map)
 	switch phase {
 	case mapPhase:
 		ntasks = len(mapFiles)
-		n_other = nReduce
+		nother = nReduce
 	case reducePhase:
 		ntasks = nReduce
-		n_other = len(mapFiles)
+		nother = len(mapFiles)
 	}
 
-	fmt.Printf("Schedule: %v %v tasks (%d I/Os)\n", ntasks, phase, n_other)
+	fmt.Printf("Schedule: %v %v tasks (%d I/Os)\n", ntasks, phase, nother)
 
 	// All ntasks tasks have to be scheduled on workers. Once all tasks
 	// have completed successfully, schedule() should return.
 	//
 	// Your code here (Part III, Part IV).
+	scheduleSample2(jobName, mapFiles, ntasks, nother, phase, registerChan)
+	fmt.Printf("Schedule: %v done\n", phase)
+
+}
+func scheduleSample1(jobName string, mapFiles []string, ntasks int, nother int, phase jobPhase, registerChan chan string) {
+	var wg sync.WaitGroup
 	currentPendingTasks := make([]int, ntasks)
 	for i := 0; i < ntasks; i++ {
 		currentPendingTasks[i] = i
@@ -64,7 +69,7 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 						fileName,
 						phase,
 						taskID,
-						n_other}, nil); !success {
+						nother}, nil); !success {
 					failedTask <- taskID
 					wg.Done()
 				} else {
@@ -81,5 +86,96 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 		}
 		currentPendingTasks = newPendingTasks
 	}
-	fmt.Printf("Schedule: %v done\n", phase)
+
+	// atlmbp174:main sgadia$ bash ./test-mr.sh
+
+	// ==> Part I
+	// ok  	mapreduce	3.645s
+
+	// ==> Part II
+	// Passed test
+
+	// ==> Part III
+	// ok  	mapreduce	13.069s
+
+	// ==> Part IV
+	// ok  	mapreduce	14.855s
+
+	// ==> Part V (inverted index)
+	// Passed test
+}
+
+func scheduleSample2(jobName string, mapFiles []string, ntasks int, nother int, phase jobPhase, registerChan chan string) {
+	completedTask := make(chan struct{})
+	pendingTask := make(chan int)
+	done := make(chan struct{})
+	allTaskDone := false
+	count := 0
+
+	// task 1 - create a goroutine to count completed task
+	go func() {
+		for {
+			<-completedTask
+			count++
+			if count == ntasks {
+				done <- struct{}{}
+			}
+		}
+	}()
+
+	go func() {
+		for i := 0; i < ntasks; i++ {
+			pendingTask <- i
+		}
+	}()
+
+	for {
+		select {
+		case <-done:
+			allTaskDone = true
+		case taskID := <-pendingTask:
+			wkAddr := <-registerChan
+			go func(wkAddr string, taskID int) {
+				fileName := ""
+				if phase == mapPhase {
+					fileName = mapFiles[taskID]
+				}
+				if success := call(wkAddr,
+					"Worker.DoTask",
+					DoTaskArgs{
+						jobName,
+						fileName,
+						phase,
+						taskID,
+						nother}, nil); !success {
+					pendingTask <- taskID
+				} else {
+					completedTask <- struct{}{}
+					registerChan <- wkAddr
+				}
+			}(wkAddr, taskID)
+		}
+		if allTaskDone {
+			break
+		}
+	}
+	// close(pendingTask)
+	// close(completedTask)
+	// close(done)
+	// // atlmbp174:main sgadia$ bash ./test-mr.sh
+	// // ==> Part I
+	// // ok  	mapreduce	3.355s
+
+	// // ==> Part II
+	// // Passed test
+
+	// // ==> Part III
+	// // ok  	mapreduce	13.187s
+
+	// // ==> Part IV
+	// // ok  	mapreduce	15.184s
+
+	// // ==> Part V (inverted index)
+	// // Passed test
+
 }
