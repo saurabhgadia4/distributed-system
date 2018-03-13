@@ -32,10 +32,61 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 	// have completed successfully, schedule() should return.
 	//
 	// Your code here (Part III, Part IV).
-	scheduleSample2(jobName, mapFiles, ntasks, nother, phase, registerChan)
+	scheduleSample(jobName, mapFiles, ntasks, nother, phase, registerChan)
 	fmt.Printf("Schedule: %v done\n", phase)
 
 }
+
+func scheduleSample(jobName string, mapFiles []string, ntasks int, nother int, phase jobPhase, servers chan string) {
+	work := make(chan int, ntasks)
+	done := make(chan bool)
+	exit := make(chan bool)
+	runTasks := func(srv string) {
+		for taskID := range work {
+			filename := ""
+			if phase == mapPhase {
+				filename = mapFiles[taskID]
+			}
+			if call(srv,
+				"Worker.DoTask",
+				DoTaskArgs{
+					jobName,
+					filename,
+					phase,
+					taskID,
+					nother}, nil) {
+				done <- true
+			} else {
+				work <- taskID
+			}
+
+		}
+	}
+
+	go func() {
+		for {
+			select {
+			case srv := <-servers:
+				go runTasks(srv)
+			case <-exit:
+				return
+			}
+		}
+	}()
+
+	// Queue all the tasks
+	for i := 0; i < ntasks; i++ {
+		work <- i
+	}
+
+	// wait for all tasks to finish
+	for i := 0; i < ntasks; i++ {
+		<-done
+	}
+	close(work)
+	exit <- true
+}
+
 func scheduleSample1(jobName string, mapFiles []string, ntasks int, nother int, phase jobPhase, registerChan chan string) {
 	var wg sync.WaitGroup
 	currentPendingTasks := make([]int, ntasks)
